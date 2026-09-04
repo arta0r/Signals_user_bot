@@ -1,0 +1,47 @@
+name: scan (signals -> telegram)
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+    - cron: '5 */2 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scan-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r requirements.txt
+      - name: unit tests
+        run: python test_detector.py
+      - name: pick timeframes
+        id: tf
+        run: |
+          if [ "${{ github.event.schedule }}" = "5 */2 * * *" ]; then
+            echo "list=4h" >> "$GITHUB_OUTPUT"
+          else
+            echo "list=5m,15m" >> "$GITHUB_OUTPUT"
+          fi
+      - name: scan
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+        run: python scan.py --once --no-state --timeframes ${{ steps.tf.outputs.list }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: signals-log
+          path: signals_log.csv
+          retention-days: 30
+          if-no-files-found: ignore
