@@ -67,6 +67,9 @@ telegram-signal-bot/
 ├── test_session.py    ← ۲۲ تست آفلاین برای همین
 ├── test_detector.py   ← ۲۹ تست آفلاین
 ├── test_xradar.py     ← ۱۲ تست آفلاین
+├── test_notify.py     ← ۴ تست آفلاینِ فرستادن به تلگرام (با mock، بدون شبکه)
+├── msgfmt.py          ← ⭐ متن پیام‌ها این‌جا ساخته می‌شود (یک عدد در هر خط، خطوط کوتاه)
+├── test_msgfmt.py     ← ۹ تست چیدمان پیام
 ├── tools/cadence_probe.py  ← ⭐ ابزار «این ستاپ چند بار در ماه می‌افتد و چند٪ جواب می‌دهد»
 └── .github/workflows/ scan.yml · hourly.yml · xradar.yml
 ```

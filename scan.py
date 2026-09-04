@@ -33,6 +33,7 @@ import config as C            # noqa: E402
 import dataio                 # noqa: E402
 import footprint as FP        # noqa: E402
 import detector as D          # noqa: E402
+import msgfmt                  # noqa: E402
 import notify                 # noqa: E402
 
 STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seen.json")
@@ -134,97 +135,12 @@ def fmt(v, digits):
 
 
 def caption_for(sym, tf, res, kind) -> str | None:
-    d = sym.get("digits", 2)
-    px = fmt(res["price"], d)
-    if kind == "setup" and res["idea"]:
-        i = res["idea"]
-        tags = i.get("label") or " · ".join(
-            res["tags"]["bull"] if i["side"] == "LONG" else res["tags"]["bear"])
-        pip = C.pip_size(sym["name"], sym.get("digits", 5))
-        pips = f"  <b>risk {fmt(abs(i['entry'] - i['sl']) / pip, 1)} pips · target "               f"{fmt(abs(i['tp'] - i['entry']) / pip, 1)} pips</b>"
-        return (
-            f" <b>{sym['label']} — {i['side']}</b>  ({tf})\n"
-            f"🎯 نقطه ورود: <code>{fmt(i['entry'], d)}</code>\n"
-            f"✅ نقطه خروج (TP): <code>{fmt(i['tp'], d)}</code>   ⛔ حد ضرر (SL): <code>{fmt(i['sl'], d)}</code>\n"
-            f"📐 RR {i['rr']:.2f}{pips}\n"
-            f"🧭 {'حد سفارشی روی' if abs(i['entry'] - i['last_close']) > 1e-9 else 'قیمت فعلی'}: "
-            f"فاصله ورود تا آخرین بسته {fmt(abs(i['entry'] - i['last_close']), d)}\n"
-            f"📏 فاصله ورود تا خروج: {fmt(abs(i['tp'] - i['entry']), d)}\n"
-            f"🧭 فیلتر EMA: روند {res['trend']} · "
-            f"{'✅ هم‌سو با ستاپ' if _aligned(res, i) else '⚠️ خلاف روند EMA'}\n"
-            + (f"👣 فیلتر فوترپراینت: {FP.caption_bits(res.get('footprint'))} · "
-               f"{'✅ هم‌سو' if _fp_aligned(res, i) else '⚠️ خلاف فلو'}\n"
-               if C.CONFIG.get("footprint", False) else "")
-            + f"🧩 ستاپ: <b>{tags}</b>{' · +۱ هم‌سو' if i.get('confluence', 1) > 1 and res.get('mode') == 'solo' else ''}\n"
-            f"📊 RSI {res['rsi']:.1f} · MACD hist {fmt(res['macd_hist'], d + 2)} · trend {res['trend']}\n"
-            f"⚠️ پیشنهاد تحلیلی، نه سیگنال قطعی · بسته‌شدن کندل مبناست"
-        )
-    if kind == "rsi":
-        rc = res["rsi_cross"]
-        if rc["dir"] == "neutral":
-            return None
-        emoji = "🔻" if rc["dir"] == "overbought" else "🔺"
-        state = "cross" if rc["i"] is not None else "in zone"
-        return (f"{emoji} <b>{sym['label']} RSI {rc['dir'].upper()}</b> ({tf})\n"
-                f"RSI = {rc['value']:.1f} ({state}) · قیمت <code>{px}</code> · trend {res['trend']}")
-    if kind == "macd":
-        m = res["macd_cross"]
-        if not m:
-            return None
-        emoji = "🟢" if m["dir"] == "bull" else "🔴"
-        return (f"{emoji} <b>{sym['label']} MACD cross {m['dir']}</b> ({tf})\n"
-                f"قیمت <code>{px}</code> · hist {fmt(res['macd_hist'], d + 2)} · "
-                f"RSI {res['rsi']:.1f} · trend {res['trend']}")
-    if kind == "trend":
-        f = res.get("trend_flip") or {}
-        who = "EMA 21/55" if C.CONFIG.get("ema_lines", "cross") == "cross" else "قیمت/EMA 55"
-        emoji = "🟢" if f.get("dir") == "bull" else "🔴"
-        side = "صعودی" if f.get("dir") == "bull" else "نزولی"
-        return (f"{emoji} <b>{sym['label']} — فیلتر EMA: روند {side}</b> ({tf})\n"
-                f"کراس روی {who}\n"
-                f"EMA21 <code>{fmt(res.get('ema_fast_v'), d)}</code> · "
-                f"EMA55 <code>{fmt(res.get('ema_slow_v'), d)}</code> · قیمت <code>{px}</code>\n"
-                f"⚖️ این «مجاز/ممنوع» است، نه سیگنال ورود: فقط جهتِ هم‌سو را trade کن.")
-    if kind == "footprint":
-        fp = res.get("footprint") or {}
-        if not fp:
-            return None
-        fl = fp.get("flip") or {}
-        emoji = "🟢" if fp.get("state") == "buy" else ("🔴" if fp.get("state") == "sell" else "⚪")
-        side = {"buy": "فشار خرید", "sell": "فشار فروش"}.get(fp.get("state"), "تعادل خرید/فروش")
-        extra = []
-        if fp.get("divergence"):
-            extra.append("دلتا با قیمت نمی‌خواند (واگرایی)")
-        if fp.get("absorption"):
-            extra.append("حجم سنگین بدون جابه‌جایی = جذب سفارشات")
-        if fp.get("lvn"):
-            extra.append("ناحیهٔ کم‌حجم نزدیک: " + " / ".join(f"{x:.2f}" for x in fp["lvn"][:2]))
-        lines = [f"{emoji} <b>{sym['label']} — فیلتر فوترپراینت: {side}</b> ({tf})",
-                 f"دلتای {fp.get('bars', 0)} کندل اخیر {fp.get('delta_pct', 0.0):+.1f}٪ · "
-                 f"شیب دلتای انباشته {fp.get('cum_slope_v', 0.0):+.2f} کندل",
-                 f"POC <code>{fmt(fp.get('poc'), d)}</code> "
-                 f"({100.0 * fp.get('poc_share', 0.0):.0f}٪ حجم) · قیمت <code>{px}</code> · "
-                 f"تغییر این پنجره {fp.get('price_chg_pct', 0.0):+.2f}٪"]
-        lines += [f"· {x}" for x in extra]
-        if fl:
-            lines.append("🔁 فلو همین الان سمت عوض کرد: "
-                         f"{'خرید' if fl.get('dir') == 'bull' else 'فروش'}")
-        lines.append("⚠️ دقت کن: این فوترپراینتِ واقعی نیست — برای فارکس دیتای تیک/سمتِ "
-                      "سفارش رایگان وجود ندارد، پس دلتا از OHLCV تخمین زده می‌شود. "
-                      "فیلتر است، نه سیگنال ورود.")
-        return "\n".join(lines)
-    if kind == "structure":
-        evs = res["recent_bos"] + res["recent_sweep"]
-        if not evs:
-            return None
-        lines = [f"🏗 <b>{sym['label']} structure</b> ({tf}) · <code>{px}</code>"]
-        for e in evs[:4]:
-            if "kind" in e and e["kind"] in ("bullish", "bearish"):
-                lines.append(f"{'BOS' if not e.get('is_choch') else 'CHoCH'} {e['kind']} @ {fmt(e['level'], d)}")
-            else:
-                lines.append(f"{e['kind']} @ {fmt(e['level'], d)}")
-        return "\n".join(lines)
-    return None
+    """
+    All chat text lives in msgfmt.py: one number per <code> line, short lines, fixed field
+    order. Telegram is RTL for Persian, so a number sharing a line with Persian words can
+    jump to the other end of the line when the bubble wraps.
+    """
+    return msgfmt.for_kind(sym, tf, res, kind)
 
 
 def _fp_aligned(res, idea) -> bool:

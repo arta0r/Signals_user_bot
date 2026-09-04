@@ -8,6 +8,8 @@ python3 -m py_compile config.py detector.py dataio.py render.py notify.py scan.p
                       session.py footprint.py tools/cadence_probe.py
 python3 test_detector.py          # detector + solo/combo idea split
 python3 test_xradar.py             # radar parsing / translation / digest
+python3 test_notify.py             # telegram transport (catches the send bug for good)
+python3 test_msgfmt.py             # message layout: one number per line, short lines
 python3 test_session.py            # session-open bias read (bullish / bearish / flat)
 python3 test_footprint.py          # EMA + footprint filters (delta proxy, gates, wiring)
 
