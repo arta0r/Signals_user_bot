@@ -1,0 +1,38 @@
+name: x radar (X gold opinions -> Persian digest)
+
+on:
+  schedule:
+    - cron: '15 */2 * * *'      # every 2 hours, offset from the chart scanner's cron
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: xradar
+  cancel-in-progress: true
+
+jobs:
+  radar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: python -m pip install -r requirements.txt
+      - name: tests
+        run: |
+          python test_detector.py
+          python test_xradar.py
+      - name: digest
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          XRADAR_GIST: ${{ secrets.XRADAR_GIST }}     # optional: gist id, stops repeats across runs
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}       # optional: fine-grained PAT, Gist read+write
+          XRADAR_JSON: ${{ secrets.XRADAR_JSON }}      # optional: {"when":"3h","keep_score_ge":2}
+        run: |
+          ARGS="--once --when 3h"
+          if [ -n "$XRADAR_GIST" ]; then ARGS="$ARGS --gist $XRADAR_GIST"; else ARGS="$ARGS --no-state"; fi
+          python xradar.py $ARGS

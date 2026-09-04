@@ -35,6 +35,7 @@ import footprint as FP        # noqa: E402
 import detector as D          # noqa: E402
 import msgfmt                  # noqa: E402
 import notify                 # noqa: E402
+import signals                # noqa: E402
 
 STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "seen.json")
 LOG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "signals_log.csv")
@@ -197,15 +198,21 @@ def log_signal(row: dict, path: str) -> None:
         print(f"  ! log failed: {e}", file=sys.stderr)
 
 
-def scan_once(symbols, tfs, cfg, tg, dry: bool, no_chart: bool, st: dict) -> int:
+def scan_once(symbols, tfs, cfg, tg, dry: bool, no_chart: bool, st: dict, open_pos: dict | None = None) -> int:
+    """One pass: resolve the plans that are still open, then look for new ones."""
     alerts = 0
+    open_pos = {} if open_pos is None else open_pos
     os.makedirs(OUT_DIR, exist_ok=True)
     png = os.path.join(OUT_DIR, "chart.png")
+    alerts += report_outcomes(symbols, tfs, cfg, tg, dry, st, open_pos)
     for sym in symbols:
         for tf in tfs:
             label = f"{sym['name']:<8} {tf:<4}"
             try:
                 bars, prov = dataio.fetch(sym, tf, C.CONFIG["bars"], cfg.get("td_api_key", ""))
+                res = D.build_setup(bars, C.CONFIG)
+                if res is not None:
+                    res["bars"] = bars          # for the TP/SL follow-up: absolute bar indices
             except Exception as e:                            # noqa: BLE001
                 print(f"{label} DATA ERROR: {str(e)[:150]}")
                 continue
@@ -258,6 +265,12 @@ def scan_once(symbols, tfs, cfg, tg, dry: bool, no_chart: bool, st: dict) -> int
                             "tp": (i or {}).get("tp", ""), "rr": f"{(i or {}).get('rr', 0):.2f}",
                             "rsi": f"{res['rsi']:.1f}", "note": "|".join(res["tags"]["bull"] + res["tags"]["bear"])[:80]},
                            LOG_FILE)
+                if C.OUTCOME.get("on", True) and kind == "setup":
+                    snap = signals.snapshot(sym["name"], tf, res.get("idea") or {}, res,
+                                          include_forming=not C.CONFIG.get("drop_forming", True))
+                    if snap:
+                        snap["label"] = sym["label"]
+                        open_pos[f"{sym['name']}|{tf}"] = snap
                 if dry or not tg.enabled:
                     print("   " + text.replace("<b>", "").replace("</b>", "")
                                .replace("<code>", "").replace("</code>", "").replace("<i>", "").replace("</i>", ""))
@@ -279,6 +292,65 @@ def scan_once(symbols, tfs, cfg, tg, dry: bool, no_chart: bool, st: dict) -> int
     return alerts
 
 
+def report_outcomes(symbols, tfs, cfg, tg, dry: bool, st: dict, open_pos: dict) -> int:
+    """
+    One follow-up per remembered plan: TP or SL, decided on the candles that closed after
+    the signal. Returns how many messages were sent so the flood guard counts them too.
+    """
+    if not C.OUTCOME.get("on", True) or not open_pos:
+        return 0
+    by = {s["name"]: s for s in symbols}
+    tfl = {s["name"]: set() for s in symbols}
+    for sym in symbols:
+        for tf in tfs:
+            tfl[sym["name"]].add(tf)
+    sent = 0
+    for key in list(open_pos):
+        pos = open_pos[key]
+        sym_name, tf = key.rsplit("|", 1)
+        sym = by.get(sym_name)
+        if sym is None or tf not in tfl.get(sym_name, set()):
+            continue                                      # not scanned this cycle: leave it
+        try:
+            bars, _ = dataio.fetch(sym, tf, C.CONFIG["bars"], cfg.get("td_api_key", ""))
+            res = D.build_setup(bars, C.CONFIG)
+            if res is not None:
+                res["bars"] = bars              # the follow-up reads bars after the signal
+        except Exception:                                 # noqa: BLE001
+            continue                                      # a data hiccup must not lose the plan
+        if res is None:
+            continue
+        oc = signals.resolve(pos, res, touch=C.OUTCOME.get("touch", True),
+                             expire_hours=float(C.OUTCOME.get("expire_hours", 72.0) or 0),
+                             pip=C.pip_size(sym_name, sym.get("digits", 5)),
+                             include_forming=not C.CONFIG.get("drop_forming", True),
+                             pessimistic=C.OUTCOME.get("pessimistic", True))
+        if oc is None:
+            continue
+        if oc["result"] == "expired":
+            open_pos.pop(key, None)                       # forgotten quietly, no noise
+            continue
+        text = msgfmt.outcome(sym, tf, {**pos, **oc})
+        if dry or not tg.enabled:
+            print("   " + text.replace("<b>", "").replace("</b>", "")
+                       .replace("<code>", "").replace("</code>", ""))
+        else:
+            try:
+                tg.send(text)
+            except Exception as e:                        # noqa: BLE001
+                print(f"   outcome send failed: {e}")
+                continue                                  # keep it, retry next run
+            sent += 1
+        open_pos.pop(key, None)
+        if sent >= int(C.TELEGRAM.get("max_per_run", 8)):
+            break
+    keep = int(C.OUTCOME.get("max_open", 12))
+    if len(open_pos) > keep:
+        for k in list(open_pos)[:-keep]:
+            open_pos.pop(k, None)
+    return sent
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--mode", choices=("solo", "combo"), default=None,
@@ -297,6 +369,8 @@ def main() -> int:
     ap.add_argument("--dry", action="store_true", help="no telegram sending")
     ap.add_argument("--no-chart", action="store_true", help="text only")
     ap.add_argument("--no-state", action="store_true", help="alert every matching bar (testing)")
+    ap.add_argument("--outcome", choices=("auto", "on", "off"), default="auto",
+                    help="the TP/SL follow-up message for a signal that already fired")
     ap.add_argument("--gist", default=os.environ.get("SCAN_GIST") or os.environ.get("XRADAR_GIST", ""),
                     help="gist id used to persist seen-state between GitHub Actions runs")
     ap.add_argument("--gist-token", default=os.environ.get("GIST_TOKEN", ""),
@@ -380,31 +454,45 @@ def main() -> int:
     tg = notify.TG(token, chat)
     if not tg.enabled and not a.dry:
         print("TG_TOKEN / TG_CHAT_ID not set — running in dry mode", file=sys.stderr)
+    if a.outcome == "off":
+        C.OUTCOME["on"] = False
+    elif a.outcome == "on":
+        C.OUTCOME["on"] = True
+
     st = load_state(STATE_FILE)
-    if a.gist and (a.no_state or not os.path.exists(STATE_FILE)):
-        # Actions wipes the workspace between runs: the gist is the only memory we have
+    open_pos = dict(st.get("open") or {})
+    if a.gist:
+        # Actions wipes the workspace between runs: the gist is the only memory we have, so
+        # it is read even with --no-state (that flag only skips the local file). "open" holds
+        # the plans still waiting for TP/SL — a run that ignored it would forget its own trades.
         remote = gist_read(a.gist, a.gist_token)
         if remote.get("seen"):
             st["seen"] = {**remote["seen"], **st.get("seen", {})}
             st["digest"] = remote.get("digest", st.get("digest", {}))
             print(f"   state: loaded {len(st['seen'])} seen key(s) from gist")
+        if remote.get("open"):
+            open_pos = {**dict(remote["open"]), **open_pos}
+            print(f"   state: {len(open_pos)} open plan(s) from gist")
 
     print(f"[{dt.datetime.now(dt.timezone.utc):%H:%M:%S}Z] {len(symbols)} symbols × {len(tfs)} timeframes · "
           f"{','.join(tfs)} · telegram={'on' if tg.enabled else 'OFF'}")
     while True:
-        n = scan_once(symbols, tfs, cfg, tg, a.dry or not tg.enabled, a.no_chart, st)
+        n = scan_once(symbols, tfs, cfg, tg, a.dry or not tg.enabled, a.no_chart, st, open_pos)
+        st["open"] = open_pos
         st["count"] = int(st.get("count", 0)) + n
         st["last_run"] = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         if not a.no_state:
             save_state(STATE_FILE, st)
-            if a.gist:
-                # keep the most recent keys only: insertion order is "last time seen", and a
-                # fat gist just slows every run down
-                items = list(st.get("seen", {}).items())[-int(C.STATE_KEEP):]
-                if gist_write(a.gist, a.gist_token, {"seen": dict(items),
-                                                      "count": st["count"],
-                                                      "last_run": st["last_run"]}):
-                    print(f"   state: saved {len(items)} key(s) to gist")
+        if a.gist:      # the gist is what survives an Actions run, --no-state or not
+            # keep the most recent keys only: insertion order is "last time seen", and a
+            # fat gist just slows every run down
+            items = list(st.get("seen", {}).items())[-int(C.STATE_KEEP):]
+            if gist_write(a.gist, a.gist_token, {"seen": dict(items),
+                                                 "open": signals.prune(
+                                                     open_pos, int(C.OUTCOME.get("max_open", 12))),
+                                                 "count": st["count"],
+                                                 "last_run": st["last_run"]}):
+                print(f"   state: saved {len(items)} key(s) + {len(open_pos)} open plan(s) to gist")
         print(f"   → {n} new alert(s) · log: {os.path.basename(LOG_FILE)}")
         if C.ALERTS.get("daily_digest", False) and not (a.dry or not tg.enabled) \
            and a.gist and st.get("last_run"):

@@ -2,8 +2,8 @@ name: scan (signals -> telegram)
 
 on:
   schedule:
-    - cron: '*/5 * * * *'
-    - cron: '5 */2 * * *'
+    - cron: '17 */2 * * *'          # every 2 hours: the full watch list on 4h
+    - cron: '47 5,11,17 * * *'      # three times a day: the fast timeframes
   workflow_dispatch: {}
 
 permissions:
@@ -16,28 +16,49 @@ concurrency:
 jobs:
   scan:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - run: python -m pip install -r requirements.txt
-      - name: unit tests
-        run: python test_detector.py
+
+      - name: unit tests (a broken build must never post to Telegram)
+        run: |
+          python test_detector.py
+          python test_msgfmt.py
+          python test_notify.py
+
       - name: pick timeframes
         id: tf
         run: |
-          if [ "${{ github.event.schedule }}" = "5 */2 * * *" ]; then
-            echo "list=4h" >> "$GITHUB_OUTPUT"
-          else
+          if [ "${{ github.event.schedule }}" = "47 5,11,17 * * *" ]; then
             echo "list=5m,15m" >> "$GITHUB_OUTPUT"
+          else
+            echo "list=4h" >> "$GITHUB_OUTPUT"
           fi
+
       - name: scan
         env:
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-        run: python scan.py --once --no-state --timeframes ${{ steps.tf.outputs.list }}
+          TD_API_KEY: ${{ secrets.TD_API_KEY }}
+          CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
+          SCAN_GIST: ${{ secrets.SCAN_GIST }}
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+        run: |
+          # the gist is the bot's memory between runs: it holds "already alerted" AND the
+          # open trade plans, so the TP/SL follow-up can only work when it is configured.
+          ARGS="--once --timeframes ${{ steps.tf.outputs.list }}"
+          if [ -n "$SCAN_GIST" ]; then
+            ARGS="$ARGS --gist $SCAN_GIST"
+          else
+            echo "::warning::SCAN_GIST / GIST_TOKEN are not set -> alerts repeat and no TP-SL follow-up"
+            ARGS="$ARGS --no-state"
+          fi
+          python scan.py $ARGS
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:

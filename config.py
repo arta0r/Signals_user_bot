@@ -127,6 +127,18 @@ ALERTS = {
     "daily_digest": False,  # a short "cycle finished" note (needs SCAN_GIST to count alerts)
 }
 
+# --------------------------------------------------- "did it hit TP or SL?"
+# The bot only ever sends a signal once. This is the second half: the same plan is kept in
+# the gist state, and on a later run the closed candles are checked for which level was
+# touched first. Needs SCAN_GIST + GIST_TOKEN to remember anything between runs.
+OUTCOME = {
+    "on": True,             # send the follow-up message
+    "touch": True,          # a wick that reaches the level counts (False = closes only)
+    "expire_hours": 72.0,   # older than this with no touch -> "expired", then forgotten
+    "max_open": 12,         # how many open plans to keep in the gist
+    "pessimistic": True,    # one candle through both levels -> count it as a loss
+}
+
 RENDER = {
     "candles": 110,
     "width": 11.0,

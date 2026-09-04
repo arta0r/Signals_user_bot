@@ -1,0 +1,42 @@
+name: session bias (bullish / bearish at each open)
+
+on:
+  schedule:
+    # UTC. +2 minutes so the opening candles have printed. GitHub may lag a few minutes.
+    - cron: '2 0 * * 1-5'      # Tokyo  (Mon-Fri)
+    - cron: '2 7 * * 1-5'      # London (Mon-Fri)
+    - cron: '32 13 * * 1-5'    # New York 13:30 UTC = 09:30 ET in summer (winter: 14:30)
+    - cron: '32 21 * * 0-4'    # Sydney 22:00 UTC = Sunday 21:30 ET-ish / Mon 08:30 AEST
+  workflow_dispatch:
+    inputs:
+      session:
+        description: "sydney | tokyo | london | newyork (blank = auto)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  bias:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+          cache-dependency-path: requirements.txt
+      - name: analyse and send
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TD_API_KEY: ${{ secrets.TD_API_KEY }}
+          CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
+          BIAS_SESSION: ${{ github.event.inputs.session }}
+        run: |
+          python3 -m pip install -q -r requirements.txt || true
+          ARGS=""
+          [ -n "$BIAS_SESSION" ] && ARGS="--session $BIAS_SESSION"
+          python3 session.py --post $ARGS

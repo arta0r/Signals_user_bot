@@ -143,6 +143,42 @@ def structure(sym, tf, res):
     return "\n".join(lines)
 
 
+RESULT = {"tp": "✅ تارگت خورد", "sl": "⛔ حد ضرر خورد",
+          "expired": "⚪ نه تارگت خورد، نه حد ضرر"}
+
+
+def _dur(h, bars) -> str:
+    if h is None:
+        return f"مدت: {bars} کندل" if bars else ""
+    return f"مدت {h:.1f} ساعت"
+
+
+def outcome(sym: dict, tf: str, oc: dict) -> str:
+    """
+    The "what happened to it" follow-up to a setup alert. Same layout rules as everything
+    else here: one number per <code> line, short lines, fixed field order.
+    """
+    d = sym.get("digits", 2)
+    idea = (oc.get("idea") or "").replace("_", "\\_")
+    head = RESULT.get(oc.get("result"), "پایان معامله")
+    if oc.get("amb"):
+        head += " · یک کندل هر دو سطح"
+    lines = [f"<b>{oc.get('label') or sym['label']} · {tf}</b>", head]
+    if idea:
+        lines.append(f"🧩 {idea}")
+    lines += [_num("🎯 ورود", oc.get("entry"), d),
+              _num("🏁 خروج", oc.get("px"), d)]
+    if oc.get("result") in ("tp", "sl"):
+        lines.append(_num("📏 جابه‌جایی (پیپ)", oc.get("pips"), 1))
+        if oc.get("rr_done"):
+            lines.append(f"📐 خروج در R  <code>{oc['rr_done']:+.2f}</code>")
+    dur = _dur(oc.get("hours"), oc.get("bars"))
+    if dur:
+        lines.append(dur)
+    lines.append("—\nنتیجه‌ی همان پیام · پیشنهاد تازه نیست")
+    return "\n".join(lines)
+
+
 BUILDERS = {"setup": setup, "rsi": rsi, "macd": macd, "trend": trend,
             "footprint": footprint, "structure": structure}
 

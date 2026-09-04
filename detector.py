@@ -654,6 +654,9 @@ def build_setup(candles, cfg):
         "recent_sweep": ev["recent_sweep"], "recent_bos": ev["recent_bos"],
         "open_gaps": ev["open_gaps"], "swings": ev["sw"], "n": n,
         "window_start": base, "abs_n": ev["abs_n"],
+        # the closed series itself: the TP/SL follow-up (signals.py) needs h/l/t of the
+        # candles that print after the alert, not just the snapshot of this one
+        "data": ev["data"], "last": last,
     }
 
 

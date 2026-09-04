@@ -1,0 +1,36 @@
+name: watch (structure only, hourly)
+
+on:
+  schedule:
+    - cron: '35 * * * *'
+  workflow_dispatch: {}
+
+permissions: {contents: read}
+concurrency: {group: watch, cancel-in-progress: true}
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.12'}
+      - run: python -m pip install -r requirements.txt
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TD_API_KEY: ${{ secrets.TD_API_KEY }}
+          CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
+      - name: structure + RSI only, quiet alerts
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+          TD_API_KEY: ${{ secrets.TD_API_KEY }}
+          CONFIG_JSON: ${{ secrets.CONFIG_JSON }}
+          SCAN_GIST: ${{ secrets.SCAN_GIST }}
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+        run: |
+          ARGS="--once --timeframes 15m"
+          if [ -n "$SCAN_GIST" ]; then ARGS="$ARGS --gist $SCAN_GIST"; else ARGS="$ARGS --no-state"; fi
+          python scan.py $ARGS

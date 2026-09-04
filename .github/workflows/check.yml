@@ -1,23 +1,29 @@
 name: check (tests only)
+
+# Deliberately NOT on push: every push to main would burn runner minutes. Trigger it by hand
+# (Actions -> check -> Run workflow) when you want the suites verified, or run
+# `bash scripts/check.sh` locally.
 on:
   workflow_dispatch: {}
-  push:
-    branches: [main]
+
 permissions:
   contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: {python-version: '3.12'}
       - run: python -m pip install -r requirements.txt
-      - name: all four suites
+      - name: every suite, offline
         run: |
           python test_detector.py
           python test_footprint.py
           python test_session.py
           python test_xradar.py
-          ls -la .github/workflows
+          python test_notify.py
+          python test_msgfmt.py
+          python test_signals.py
